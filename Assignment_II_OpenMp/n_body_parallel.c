@@ -109,7 +109,7 @@ double reduced_algorithm(vect_t *pos, vect_t *old_pos, vect_t *vel, double *mass
 	// For each particle q
 	for (unsigned int q = 0; q < N; q++) {
 	    // for each particle k > q
-#pragma omp for schedule(dynamic, 50)
+#pragma omp parallel for schedule(dynamic, 50)
 	    for (unsigned int k = q+1; k < N; k++) {
 	        double x_diff = pos[q][X] - pos[k][X]; 
 		double y_diff = pos[q][Y] - pos[k][Y]; 
