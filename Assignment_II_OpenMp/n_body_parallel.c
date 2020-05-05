@@ -102,24 +102,35 @@ double simple_algorithm(vect_t *pos, vect_t *old_pos, vect_t *vel, double *mass)
 double reduced_algorithm(vect_t *pos, vect_t *old_pos, vect_t *vel, double *mass) {
     double start_time = omp_get_wtime();
     vect_t *forces = malloc(N*sizeof(vect_t));
+    int t = 1;
     for (unsigned int i = 0; i < STEPS; i++) {
 	// Forces array set to 0
 	forces = memset(forces, 0, N*sizeof(vect_t));
 	// Compute forces
-	// For each particle q
+	// For each particle q, parallelize
+#pragma omp parallel for schedule(guided)
 	for (unsigned int q = 0; q < N; q++) {
 	    // for each particle k > q
-#pragma omp parallel for schedule(dynamic, 50)
+	    double x_diff = 0.0;
+	    double y_diff = 0.0;
+	    double dist = 0.0;
+	    double dist_cubed = 0.0;
+	    double force_qk_X = 0.0;
+	    double force_qk_Y = 0.0;
 	    for (unsigned int k = q+1; k < N; k++) {
-	        double x_diff = pos[q][X] - pos[k][X]; 
-		double y_diff = pos[q][Y] - pos[k][Y]; 
-	        double dist = sqrt(x_diff*x_diff + y_diff*y_diff); 
-		double dist_cubed = dist*dist*dist;
-		double force_qk_X = G*mass[q]*mass[k]/dist_cubed * x_diff;
-		double force_qk_Y = G*mass[q]*mass[k]/dist_cubed * y_diff;
+	        x_diff = pos[q][X] - pos[k][X]; 
+	        y_diff = pos[q][Y] - pos[k][Y]; 
+	        dist = sqrt(x_diff*x_diff + y_diff*y_diff); 
+		dist_cubed = dist*dist*dist;
+		force_qk_X = G*mass[q]*mass[k]/dist_cubed * x_diff;
+	        force_qk_Y = G*mass[q]*mass[k]/dist_cubed * y_diff;
 		forces[q][X] += force_qk_X;
 		forces[q][Y] += force_qk_Y;
+		// Protect from data race by using atomic directive
+		// Ensures that the memory location is updated atomically
+		#pragma omp atomic
 		forces[k][X] -= force_qk_X;
+		#pragma omp atomic
 		forces[k][Y] -= force_qk_Y;
 	    }
 	}
@@ -134,7 +145,7 @@ double reduced_algorithm(vect_t *pos, vect_t *old_pos, vect_t *vel, double *mass
     }
     // Print positions
     double elapsed_time = omp_get_wtime() - start_time;
-    #if PRINT
+#if PRINT
     for (unsigned int q = 0; q < N; q++)
 	q == N - 1 ? printf("(%f, %f)\n", pos[q][X], pos[q][Y]) : printf("(%f, %f)", pos[q][X], pos[q][Y]);
     #endif
@@ -163,24 +174,32 @@ int main(void) {
     vect_t *old_pos = malloc(N*sizeof(vect_t));
     vect_t *vel = malloc(N*sizeof(vect_t));
     double *mass = malloc(N*sizeof(double));
+    
 
-    printf("N = %d, dt = %f, STEPS = %d\n", N, DT, STEPS);
     
     // Simple algorithm,
     init_data(pos, old_pos, vel, mass);
+    // Reduced algorithms
+    vect_t *pos_red = malloc(N*sizeof(vect_t));;
+    vect_t *old_pos_red = malloc(N*sizeof(vect_t));
+    vect_t *vel_red = malloc(N*sizeof(vect_t));
+    double *mass_red = malloc(N*sizeof(double));
+    memcpy(pos_red, pos, N*sizeof(vect_t));
+    memcpy(old_pos_red, old_pos, N*sizeof(vect_t));
+    memcpy(vel_red, vel, N*sizeof(vect_t));
+    memcpy(mass_red, mass, N*sizeof(double));
+    
     double t_simple = simple_algorithm(pos, old_pos, vel, mass);
     printf("Time SIMPLE = %f\n", t_simple);
 
-    // Reduced algorithms
-    init_data(pos, old_pos, vel, mass);
-    double t_reduced = reduced_algorithm(pos, old_pos, vel, mass);
+    double t_reduced = reduced_algorithm(pos_red, old_pos_red, vel_red, mass_red);
     printf("Time reduced = %f\n", t_reduced);
     
     // Cleanup
-    free(pos);
-    free(old_pos);
-    free(vel);
-    free(mass);
+    free(pos); free(pos_red);
+    free(old_pos); free(old_pos_red);
+    free(vel); free(vel_red);
+    free(mass); free(mass_red);
 
     return 0;
 }
