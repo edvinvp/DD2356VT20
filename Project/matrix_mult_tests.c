@@ -142,7 +142,7 @@ int same_matrices(float *A, float *B, int n) {
     float eps = 0.000001f;
     for (int i = 0; i < n; ++i) {
 	for (int j = 0; j < n; ++j) {
-	    if (fabs(A[i*n + j] - B[i*n + j] > eps)) {
+	    if (fabs((float)A[i*n + j] - (float) B[i*n + j]) > eps) {
 		return 0;
 	    }
 	}

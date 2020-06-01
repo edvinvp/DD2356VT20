@@ -1,3 +1,8 @@
+/* @Edvin von Platen
+ * Fox algorithm for distributed matrix multiplication using MPI and OpenMP
+ * Compile locally with: mpicc -O2 -fopenmp fox.c -o fox -lm
+ */
+
 #include <mpi.h>
 #include <stdio.h>
 #include <math.h> // sqrt, compile with -lm
@@ -5,8 +10,10 @@
 #include <omp.h>
 #include <stdlib.h> // free
 
+// 2^14 -> 2^7 -> 128/16 = 2^3 = 8
+
 /* Multiply the square matrices A*B = C */
-void mat_mul_reorder_unroll_omp(float *A, float *B, float *C, int n) {
+void mat_mul(float *A, float *B, float *C, int n) {
 #pragma omp parallel for schedule(guided)
     for (int i = 0; i < n; ++i) {
 	for (int k = 0; k < n; ++k) {
@@ -15,76 +22,6 @@ void mat_mul_reorder_unroll_omp(float *A, float *B, float *C, int n) {
 		C[i*n + j + 1] += A[i*n + k] * B[k*n + j + 1];
 		C[i*n + j + 2] += A[i*n + k] * B[k*n + j + 2];
 		C[i*n + j + 3] += A[i*n + k] * B[k*n + j + 3];
-	    }
-	}
-    }
-}
-
-/* Multiply the square matrices A*B = C */
-void mat_mul_reorder_unroll(float *A, float *B, float *C, int n) {
-    for (int i = 0; i < n; ++i) {
-	for (int k = 0; k < n; ++k) {
-	    for (int j = 0; j < n; j += 4) {
-		C[i*n + j + 0] += A[i*n + k] * B[k*n + j + 0];
-		C[i*n + j + 1] += A[i*n + k] * B[k*n + j + 1];
-		C[i*n + j + 2] += A[i*n + k] * B[k*n + j + 2];
-		C[i*n + j + 3] += A[i*n + k] * B[k*n + j + 3];
-	    }
-	}
-    }
-}
-
-/* Multiply the square matrices A*B = C */
-void mat_mul_reorder(float *A, float *B, float *C, int n) {
-    for (int i = 0; i < n; ++i) {
-	for (int k = 0; k < n; ++k) {
-	    for (int j = 0; j < n; ++j) {
-		C[i*n + j] += A[i*n + k] * B[k*n + j];
-	    }
-	}
-    }
-}
-
-void mat_mul_strip(float *A, float *B, float *C, int n) {
-    // Cache line 64 bytes: Assume 4 bytes per float, using 64/sizeof(float) could break the unroll.    
-    const int STRIP = 16;
-    // Requires the matrix row size to be a multiple of 16.
-    // If not use a non-blocked and non-unrolled method or chan
-#pragma omp parallel for schedule(guided)
-    for (int ii = 0; ii < n; ii+=STRIP) {
-	for (int kk = 0; kk < n; kk+=STRIP) {
-	    for (int jj = 0; jj < n; jj += STRIP) {
-		for (int i = ii; i < ii + STRIP; ++i) {
-		    for (int k = kk; k < kk + STRIP; ++k) {
-			    int j = jj;
-			    C[i*n + j + 0] += A[i*n + k] * B[k*n + j + 0];
-			    C[i*n + j + 1] += A[i*n + k] * B[k*n + j + 1];
-			    C[i*n + j + 2] += A[i*n + k] * B[k*n + j + 2];
-			    C[i*n + j + 3] += A[i*n + k] * B[k*n + j + 3];
-			    C[i*n + j + 4] += A[i*n + k] * B[k*n + j + 4];
-			    C[i*n + j + 5] += A[i*n + k] * B[k*n + j + 5];
-			    C[i*n + j + 6] += A[i*n + k] * B[k*n + j + 6];
-			    C[i*n + j + 7] += A[i*n + k] * B[k*n + j + 7];
-			    C[i*n + j + 8] += A[i*n + k] * B[k*n + j + 8];
-			    C[i*n + j + 9] += A[i*n + k] * B[k*n + j + 9];
-			    C[i*n + j + 10] += A[i*n + k] * B[k*n + j + 10];
-			    C[i*n + j + 11] += A[i*n + k] * B[k*n + j + 11];
-			    C[i*n + j + 12] += A[i*n + k] * B[k*n + j + 12];
-			    C[i*n + j + 13] += A[i*n + k] * B[k*n + j + 13];
-			    C[i*n + j + 14] += A[i*n + k] * B[k*n + j + 14];
-			    C[i*n + j + 15] += A[i*n + k] * B[k*n + j + 15];
-		    }
-		}
-	    }
-	}
-    }    
-}
-
-void mat_mul_naive(float *A, float *B, float *C, int n) {
-    for (int i = 0; i < n; i++) {
-	for (int j = 0; j < n; j++) {
-	    for (int k = 0; k < n; k++) {
-		C[i*n + j] += A[i*n +k] * B[k*n + j];
 	    }
 	}
     }
@@ -117,6 +54,20 @@ void test_matrices_2(float *A, float *B, float *C, int n) {
     }
 }
 
+// Return 1 if C_BLOCK is equal to the corresponding part of C within eps precision
+// else return 0
+int block_equal(float *C_block, float *C, int i_block, int j_block, int BLOCK_SIZE, int MATRIX_SIZE, float eps)
+{
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+	for (int j = 0; j < BLOCK_SIZE; j++) {
+	    if (fabs(C_block[i*BLOCK_SIZE + j] - C[(MATRIX_SIZE)*(i_block + i) + (j_block + j)]) > eps)
+		return 0;
+	}
+    }
+    return 1;
+}
+
+
 int main(int argc, char* argv[])
 {
     // Assumptions:
@@ -133,18 +84,20 @@ int main(int argc, char* argv[])
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
     MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    omp_set_num_threads(4);
+    omp_set_num_threads(8);
     /*
-     * We will perform benchmarks using even powers of 2 number of processes.
+     * We will perform benchmarks using even powers of 2 number of processes. If we want to use any square
+     * we have to make sure that its sqrt is a factor in the matrix size.
      * The block size is then given by dividing the matrix size sqrt(num_processes)
-     * If using the mat_mul_strip BLOCK_SIZE must be a multiple of 16.
+     * The matrix multiplication unroll requires that BLOCK_SIZE is a multiple of 4.
      */
-    int MATRIX_SIZE = pow(2, 10); // 4096, 2^6 = 64
+    int sqrt_num_processes = sqrt(num_processes);
+    int MATRIX_SIZE = pow(2, 10);
     int BLOCK_SIZE = MATRIX_SIZE / (int) sqrt(num_processes); // EX: with 4 processes and 2^12 matrix size => 2^10 block size
     float *A_full = malloc(sizeof(float) * MATRIX_SIZE * MATRIX_SIZE);
     float *B_full = malloc(sizeof(float) * MATRIX_SIZE * MATRIX_SIZE);
     float *C_full = malloc(sizeof(float) * MATRIX_SIZE * MATRIX_SIZE);
-    test_matrices_2(A_full, B_full, C_full, MATRIX_SIZE);
+    test_matrices_1(A_full, B_full, C_full, MATRIX_SIZE);
 
     // Matrix block setup. Know that num_processes is square.
     float *A_block_orig = malloc(sizeof(float) * BLOCK_SIZE * BLOCK_SIZE);
@@ -154,7 +107,6 @@ int main(int argc, char* argv[])
     
     // Create cartesian toplogy
     MPI_Comm cart_communicator, row_communicator;
-    int sqrt_num_processes = sqrt(num_processes);
     int dim_size = sqrt_num_processes;
     int dims[2] = {dim_size, dim_size};
     // Specify row sub communicator dimensions, MPI uses (col,row) indexing
@@ -224,9 +176,9 @@ int main(int argc, char* argv[])
 	// Step 2. Multiply Recieved A with Current B
 	// if root use original A block
 	if (cart_coords[0] == root_coords[0] && cart_coords[1] == root_coords[1]) {
-	    mat_mul_strip(A_block_orig, B_block, C_block, BLOCK_SIZE);
+	    mat_mul(A_block_orig, B_block, C_block, BLOCK_SIZE);
 	} else {
-	    mat_mul_strip(A_block, B_block, C_block, BLOCK_SIZE);
+	    mat_mul(A_block, B_block, C_block, BLOCK_SIZE);
 	}
 
 	// Step 3. "Roll" B "up" one step.
@@ -243,27 +195,16 @@ int main(int argc, char* argv[])
     }
     printf("(%d, %d): %f, %f, %f, %f, %f\n", cart_coords[0], cart_coords[1], C_block[0], C_block[1], C_block[2], C_block[3], C_block[4]);
 
-    // reference
-    double mat_mul_time = MPI_Wtime();
-    mat_mul_strip(A_full, B_full, C_full, MATRIX_SIZE);
-    double mat_mul_elapsed = MPI_Wtime() - mat_mul_time;
-    if (rank == 0) {
-	printf("mat_mul time: %f \n", mat_mul_elapsed);
-    }
 
-    // reset C_Full
-    for (int i = 0; i < MATRIX_SIZE; i++) {
-	for (int j = 0; j < MATRIX_SIZE; j++) {
-	    C_full[i*MATRIX_SIZE + j] = 0.0f;
-	}
-    }
-    double mat_mul_slow_time = MPI_Wtime();
-    // mat_mul_naive(A_full, B_full, C_full, MATRIX_SIZE);
-    double mat_mul_slow_elapsed = MPI_Wtime() - mat_mul_slow_time;
-    if (rank == 0) {
-//	printf("mat_mul time: %f \n", mat_mul_slow_elapsed);
-    }
-    
+    // CORRECTNESS TEST:
+    // reference full multiplication
+    mat_mul(A_full, B_full, C_full, MATRIX_SIZE);
+    // Check if block is equal
+    int fox_correct =  block_equal(C_block, C_full, i_block, j_block, BLOCK_SIZE, MATRIX_SIZE, 0.00001f);
+    if (fox_correct)
+	printf("Fox success! Coords: (%d, %d)\n", cart_coords[0], cart_coords[1]);
+    else
+	printf("FOX ALGORITHM FAILED: CART COORDS = (%d, %d)\n", cart_coords[0], cart_coords[1]); 
     
     free(A_block_orig);
     free(A_block); free(B_block); free(C_block);
