@@ -10,8 +10,6 @@
 #include <omp.h>
 #include <stdlib.h> // free
 
-// 2^14 -> 2^7 -> 128/16 = 2^3 = 8
-
 /* Multiply the square matrices A*B = C */
 void mat_mul(float *A, float *B, float *C, int n) {
 #pragma omp parallel for schedule(guided)
@@ -93,7 +91,7 @@ int main(int argc, char* argv[])
      */
     int sqrt_num_processes = sqrt(num_processes);
     int MATRIX_SIZE = pow(2, 10);
-    int BLOCK_SIZE = MATRIX_SIZE / (int) sqrt(num_processes); // EX: with 4 processes and 2^12 matrix size => 2^10 block size
+    int BLOCK_SIZE = MATRIX_SIZE / (int) sqrt(num_processes);
     float *A_full = malloc(sizeof(float) * MATRIX_SIZE * MATRIX_SIZE);
     float *B_full = malloc(sizeof(float) * MATRIX_SIZE * MATRIX_SIZE);
     float *C_full = malloc(sizeof(float) * MATRIX_SIZE * MATRIX_SIZE);
@@ -133,7 +131,6 @@ int main(int argc, char* argv[])
     int j_block = cart_coords[0] * BLOCK_SIZE;
     for (int i = 0; i < BLOCK_SIZE; i++) {
 	for (int j = 0; j < BLOCK_SIZE; j++) {
-	    // The number of cols = number of processes
 	    A_block_orig[i*BLOCK_SIZE + j] = A_full[(MATRIX_SIZE)*(i_block + i) + (j_block + j)];
 	    A_block[i*BLOCK_SIZE + j] = A_full[(MATRIX_SIZE)*(i_block + i) + (j_block + j)];
 	    B_block[i*BLOCK_SIZE + j] = B_full[(MATRIX_SIZE)*(i_block + i) + (j_block + j)];
@@ -151,12 +148,8 @@ int main(int argc, char* argv[])
     // Recieve B from
     MPI_Cart_shift(cart_communicator, 1, 1, &roll_source, &roll_recv);
     MPI_Status roll_status;
-    
-    // Timing: TODO: Ask if it is reasonable to start the timing here or if I should create the
-    // matrix on the root and the broadcast each block to the corresponding proocess.
-    // Why I start here now: According to the article we often want to keep the block structure
-    // to perform additional matirx operations. I think that these operations are most likely
-    // multiplications.
+
+    // Start Fox Algorithm timing
     double start_time = MPI_Wtime();
     
     // The fox algorithm
@@ -201,10 +194,11 @@ int main(int argc, char* argv[])
     mat_mul(A_full, B_full, C_full, MATRIX_SIZE);
     // Check if block is equal
     int fox_correct =  block_equal(C_block, C_full, i_block, j_block, BLOCK_SIZE, MATRIX_SIZE, 0.00001f);
-    if (fox_correct)
+    if (fox_correct) {
 	printf("Fox success! Coords: (%d, %d)\n", cart_coords[0], cart_coords[1]);
-    else
-	printf("FOX ALGORITHM FAILED: CART COORDS = (%d, %d)\n", cart_coords[0], cart_coords[1]); 
+    } else {
+	printf("FOX ALGORITHM FAILED: CART COORDS = (%d, %d)\n", cart_coords[0], cart_coords[1]);
+    }
     
     free(A_block_orig);
     free(A_block); free(B_block); free(C_block);
